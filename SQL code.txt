@@ -1,0 +1,206 @@
+-----------------CREATING TABLES-------------------
+
+-- Table 1: project.daily_activity
+
+DROP TABLE IF EXISTS project.daily_activity;
+
+CREATE TABLE IF NOT EXISTS project.daily_activity
+(
+    id bigint,
+    activity_date date,
+    total_steps integer,
+    total_distance numeric,
+    tracker_distance numeric,
+    logged_activities_distance numeric,
+    very_active_distance numeric,
+    moderately_active_distance numeric,
+    light_active_distance numeric,
+    sedentary_active_distance numeric,
+    very_active_minutes integer,
+    fairly_active_minutes integer,
+    lightly_active_minutes integer,
+    sedentary_minutes integer,
+    calories integer
+);
+
+-- Table 2: project.hourly_steps
+
+DROP TABLE IF EXISTS project.hourly_steps;
+
+CREATE TABLE IF NOT EXISTS project.hourly_steps
+(
+    id bigint,
+    activity_hour timestamp without time zone,
+    step_total integer
+);
+
+-- Table 3: project.sleep_day
+
+DROP TABLE IF EXISTS project.sleep_day;
+
+CREATE TABLE IF NOT EXISTS project.sleep_day
+(
+    id bigint,
+    sleep_day date,
+    total_sleep_records integer,
+    total_minutes_asleep integer,
+    total_time_in_bed integer
+);
+
+-- Table 4: project.weight_log
+
+DROP TABLE IF EXISTS project.weight_log;
+
+CREATE TABLE IF NOT EXISTS project.weight_log
+(
+    id bigint,
+    date date,
+    weight_kg numeric,
+    weight_pounds numeric,
+    fat numeric,
+    bmi numeric,
+    ismanual boolean
+);
+
+-----------------IMPORTING DATA-------------------
+
+COPY project.daily_activity FROM 'C:\FILES\dailyActivity_merged.csv' DELIMITER ',' CSV HEADER;
+COPY project.hourly_steps FROM 'C:\FILES\hourlySteps_merged.csv' DELIMITER ',' CSV HEADER;
+COPY project.sleep_day FROM 'C:\FILES\sleepDay_merged.csv' DELIMITER ',' CSV HEADER;
+COPY project.weight_log FROM 'C:\FILES\weightLogInfo_merged.csv' DELIMITER ',' CSV HEADER;
+
+-----------------ANALYZING DATA-------------------
+
+-- Number of users tracking their sleep
+
+SELECT 
+	COUNT(DISTINCT id)
+FROM
+	project.sleep_day
+	
+-- Number of users tracking their weight
+
+SELECT 
+	COUNT(DISTINCT id)
+FROM
+	project.weight_log
+	
+-- Classify each user by the amount of daily device usage
+	--We do that by 
+		-- 1- Writing an inner query to count each user's the amount of days the used the device.
+		-- 2- Writing an outer query to classify each user.
+CREATE VIEW project.device_usage AS
+( SELECT
+ 	id,
+ 	days_used,
+ 	CASE WHEN days_used >= 20 THEN 'High Use'
+ 	ELSE 'Low Use'
+ 	END AS usage_type
+  FROM
+ (
+	SELECT 
+		id,
+		count(DISTINCT activity_date) days_used
+	FROM 
+		project.daily_activity
+	GROUP BY 1
+ ) q
+)
+
+-- Check what type of users we have the most based on their activity level, We will do that by:
+	--Fetch the average steps taken by each user 
+	SELECT
+		id,
+		AVG(total_steps) AS average_steps
+	FROM
+		project.daily_activity
+	GROUP BY 1
+	--Classify each user by the amount of average steps taken
+CREATE VIEW project.activity_level AS
+	(SELECT 
+	id,
+	CASE WHEN average_steps < 5000 THEN 'Sedentary'
+		 WHEN average_steps BETWEEN 5000 AND 7499 THEN 'Low Active'
+		 WHEN average_steps BETWEEN 7500 AND 9999 THEN 'Somewhat Active'
+		 WHEN average_steps BETWEEN 10000 AND 12499 THEN 'Active'
+		 WHEN average_steps > 12500 THEN 'Highly Active'
+	  END AS activity_level
+FROM (SELECT
+		id,
+		AVG(total_steps) AS average_steps 
+	FROM
+		project.daily_activity
+	GROUP BY 1) a )
+	--Count the number of users by each activity
+SELECT
+	activity_level,
+	count(*)                              AS user_count,
+	COUNT(*) / SUM(COUNT(*)) OVER() * 100 AS percentage
+FROM project.activity_level
+GROUP BY 1
+ORDER BY 2 DESC
+		--We can see that most of our users fall under the sedentary to somewhat active lifestyle, It will be better to visualize that on a pie chart.
+
+--Activity and sleep amount by day of the week
+CREATE TABLE project.average_SleepAndSteps_ByDay AS
+(
+	SELECT
+		TO_CHAR(activity_date, 'Day') AS day_name,
+		AVG(total_steps) 			  AS average_steps,
+		AVG(total_minutes_asleep)     AS average_sleep
+	FROM
+		project.daily_activity a
+	INNER JOIN project.sleep_day b
+	ON a.activity_date=b.sleep_day AND a.id=b.id
+	GROUP BY 1
+)
+
+-- Top 10 users by monthly total steps
+
+with leaderboard AS	
+(	
+	SELECT
+		EXTRACT('month' FROM activity_date) AS month,
+		id,
+		RANK () OVER(PARTITION BY EXTRACT('month' FROM activity_date) ORDER BY SUM(total_steps) DESC) AS rank
+	FROM
+		project.daily_activity
+	GROUP BY 1,2
+)	
+	
+SELECT
+	a.id,
+	b.month,
+	b.rank,
+	SUM(a.total_steps)
+FROM
+	project.daily_activity a
+JOIN leaderboard b ON a.id=b.id
+GROUP BY 1,2,3
+HAVING RANK <= 10
+ORDER BY 2,3
+
+-----------------MERGING TABLES-------------------
+
+-- We will merge our created views with the main table.
+
+CREATE TABLE project.newdaily_activity AS
+(
+	SELECT
+		a.*,
+		b.usage_type,
+		c.activity_level
+	FROM
+		project.daily_activity a
+    LEFT JOIN 
+		project.device_usage b ON a.id=b.id
+	LEFT JOIN
+		project.activity_level c ON a.id=c.id
+)
+
+
+
+
+
+
+
